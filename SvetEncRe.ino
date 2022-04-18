@@ -1,23 +1,39 @@
+#include <GyverEncoder.h>
+
+#include <Adafruit_NeoPixel.h>
+// #include <rp2040_pio.h>
+
+#include <Kelvin2RGB.h>
 #include <Adafruit_NeoPixel.h>
 #include "GyverEncoder.h"
 #ifdef __AVR__
 #include <avr/power.h>
 #endif
 
+#define ROUTNUM 5 //кол-во режимов
 #define PIN            2
 #define NUMPIXELS      46 //+1 от реального
 #define pin_CLK 3
 #define pin_DT  4
 #define pin_Btn 5
 Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMPIXELS, PIN, NEO_GRB + NEO_KHZ800);
-Encoder ENCO(pin_CLK, pin_DT, pin_Btn, 1);
+Encoder ENCO(pin_CLK, pin_DT, pin_Btn);
 
 int delayval = 5; // delay for half a second
 
 int nowsetup = 0; //нынешний режим (0 - дефолт резет, 1-4 - рабочие)
-int counter1, counter2;
-int nowcolor[] = {0, 0, 0};
+int hue, saturation, lightness;
+//int nowcolor[] = {0, 0, 0};
+uint32_t nowcolor = (0 | 0 | 0);
 int nowwhite[] = {0, 0, 0};
+int kel = 5600; //стандартная теплота для режима кельвинов, нейтральный белый свет
+Kelvin2RGB nkel(5600, 75);
+
+Kelvin2RGB getKelvin2rgb(int temp, int light)
+{
+  Kelvin2RGB tempor(temp, light);
+  return tempor;
+}
 
 uint32_t getPixelColorHsv(
   uint16_t h, uint8_t s, uint8_t v) {
@@ -116,9 +132,13 @@ void setup() {
   pinMode(pin_CLK, INPUT);
   pinMode(pin_Btn, INPUT_PULLUP); // Кнопка не подтянута к +5 поэтому задействуем внутренний pull-up резистор
 
-  counter1 = 0; //цвет по HSV, от 0 до 360 (наверное, на самом деле поебать, стоит фикс внутри)
-  counter2 = 100; //яркость, 0-100
-
+  hue = 0; //цвет по HSV, от 0 до 360 (наверное, на самом деле поебать, стоит фикс внутри)
+  saturation = 255; //насыщенность 0-255
+  lightness = 100; //яркость, 0-100
+  kel = 5600; //стандартная теплота для режима кельвинов, нейтральный белый свет
+  
+  nowcolor = getPixelColorHsv(hue, saturation, lightness); //дефолтный цвет
+  
   pixels.begin(); // This initializes the NeoPixel library.
   nowsetup = 1;
   Beauty();
@@ -126,38 +146,49 @@ void setup() {
     pixels.setPixelColor(i, getPixelColorHsv(0, 255, 100));
   }
   pixels.show();
-  ENCO.setTickMode(AUTO);
+  ENCO.tick();
+  Serial.begin(9600);
 }
 
 void loop() {
   //присрать три режима: изменение цвета, изменение яркости //upd. частично присрано
-
+  bool beeperFlag = false;
+  
   for (int i = 0; i < NUMPIXELS; i++) {
-    pixels.setPixelColor(i, getPixelColorHsv(counter1, 255, counter2));
+    pixels.setPixelColor(i, nowcolor);
   }
   pixels.show();
-
-
 
   if (ENCO.isRight())//по часовой
   {
     switch (nowsetup) {
       case 1:
-        counter1 += (1536 / 256); //256 цветов
-        if (counter1 >= 1536) counter1 = 1;
+        hue += (1536 / 256); //256 цветов
+        if (hue >= 1536) hue = 1;
+        nowcolor = getPixelColorHsv(hue, saturation, lightness);
         // изменение цвета
         break;
       case 2:
-        counter2 += 5;
-        if (counter2 > 100)
-          counter2 = 100;
+        lightness += 5;
+        if (lightness > 100)
+          lightness = 100;
+        nowcolor = getPixelColorHsv(hue, saturation, lightness);
         // изменение яркости
         break;
-      default:
+      case 5: //режим кельвинов
+        if (kel<20000)
+          kel+=1000;
+        Serial.println(kel);
+        nkel = getKelvin2rgb(kel, 75);
+        //nowcolor = ((uint32_t)nkel.Red << 16 | (uint32_t)nkel.Green << 8 | nkel.Blue);
+        nowcolor = ((uint32_t)getKelvin2rgb(kel, 75).Red << 16 | (uint32_t)getKelvin2rgb(kel, 75).Green << 8 | getKelvin2rgb(kel, 75).Blue);
         break;
-        //1
+      case 3: //режим радуги
+      case 4: //режим белого цвета
+      default:
+        nowcolor = getPixelColorHsv(hue, saturation, lightness);
+        break;
     }
-
 
   }
   else if (ENCO.isLeft())
@@ -165,19 +196,30 @@ void loop() {
 
     switch (nowsetup) {
       case 1:
-        counter1 -= (1536 / 256); //256 цветов
-        if (counter1 < 0) counter1 = 1536 - 1;
+        hue -= (1536 / 256); //256 цветов
+        if (hue < 0) hue = 1536 - 1;
+        nowcolor = getPixelColorHsv(hue, saturation, lightness);
         // изменение цвета
         break;
       case 2:
-        counter2 -= 5;
-        if (counter2 < 5)
-          counter2 = 5;
+        lightness -= 5;
+        if (lightness < 5)
+          lightness = 5;
+        nowcolor = getPixelColorHsv(hue, saturation, lightness);
         // изменение яркости
         break;
-      default:
+      case 5: //режим кельвинов
+        if (kel>2000)
+          kel-=1000;
+        Serial.println(kel);
+        nkel = getKelvin2rgb(kel, 75);
+        nowcolor = ((uint32_t)nkel.Red << 16 | (uint32_t)nkel.Green << 8 | nkel.Blue);
         break;
-        //1
+      case 3: //режим радуги
+      case 4: //режим белого цвета
+      default:
+        nowcolor = getPixelColorHsv(hue, saturation, lightness);
+        break;
     }
 
   }
@@ -187,8 +229,31 @@ void loop() {
   {
     Beauty();
     nowsetup++;
-    if (nowsetup > 2)
+    if (nowsetup > ROUTNUM)
       nowsetup = 1;
   }
-}
 
+  switch (nowsetup) {
+    case 3:
+      hue += (1536 / 750); //256 цветов
+        if (hue >= 1536) hue = 1;
+      nowcolor = getPixelColorHsv(hue, saturation, lightness);
+      break;
+    case 4:
+      hue = 0;
+      saturation = 0;
+      lightness = 100;
+      nowcolor = getPixelColorHsv(hue, saturation, lightness);
+      break;
+    case 5:
+      nkel = getKelvin2rgb(5600, 75);
+      nowcolor = ((uint32_t)nkel.Red << 16 | (uint32_t)nkel.Green << 8 | nkel.Blue);
+      break;
+    default:
+      saturation = 255;
+      nowcolor = getPixelColorHsv(hue, saturation, lightness);
+      break;
+  }
+  
+  ENCO.tick();
+}
